@@ -75,7 +75,7 @@ export default class Ink {
 				});
 
 		this.rootNode.onImmediateRender = this.onRender;
-		this.log = logUpdate.create(options.stdout);
+		this.log = logUpdate.create(options.stdout, {showCursor: true});
 		this.throttledLog = unthrottled
 			? this.log
 			: (throttle(this.log, undefined, {

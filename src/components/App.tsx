@@ -127,7 +127,9 @@ export default class App extends PureComponent<Props, State> {
 	}
 
 	override componentDidMount() {
-		cliCursor.hide(this.props.stdout);
+		// Note: Cursor hiding is disabled to support IME (Input Method Editor)
+		// The cursor visibility is now managed by the showCursor option in ink.tsx
+		// cliCursor.hide(this.props.stdout);
 	}
 
 	override componentWillUnmount() {
