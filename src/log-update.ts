@@ -26,12 +26,12 @@ const create = (stream: Writable, {showCursor = false} = {}): LogUpdate => {
 		}
 
 		previousOutput = output;
-		stream.write(ansiEscapes.eraseLines(previousLineCount) + output);
+		stream.write('\x1b[?2026h' + ansiEscapes.eraseLines(previousLineCount) + output + '\x1b[?2026l');
 		previousLineCount = output.split('\n').length;
 	};
 
 	render.clear = () => {
-		stream.write(ansiEscapes.eraseLines(previousLineCount));
+		stream.write('\x1b[?2026h' + ansiEscapes.eraseLines(previousLineCount) + '\x1b[?2026l');
 		previousOutput = '';
 		previousLineCount = 0;
 	};
