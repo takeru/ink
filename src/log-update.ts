@@ -20,7 +20,18 @@ const create = (stream: Writable, {showCursor = false} = {}): LogUpdate => {
 			hasHiddenCursor = true;
 		}
 
-		const output = str + '\n';
+		// When cursor is visible, remove any trailing newlines to keep cursor on input line
+		// When cursor is hidden, ensure there's a trailing newline
+		let output: string;
+		if (showCursor) {
+			// Remove trailing zero-width spaces (used as markers)
+			let processed = str.replace(/\u200B/g, '');
+			// Remove trailing newlines when cursor is visible
+			output = processed.replace(/\n+$/, '');
+		} else {
+			// Ensure trailing newline when cursor is hidden
+			output = str.endsWith('\n') ? str : str + '\n';
+		}
 		if (output === previousOutput) {
 			return;
 		}
@@ -47,7 +58,7 @@ const create = (stream: Writable, {showCursor = false} = {}): LogUpdate => {
 	};
 
 	render.sync = (str: string) => {
-		const output = str + '\n';
+		const output = showCursor ? str : str + '\n';
 		previousOutput = output;
 		previousLineCount = output.split('\n').length;
 	};
