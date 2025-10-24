@@ -37,7 +37,20 @@ const create = (stream: Writable, {showCursor = false} = {}): LogUpdate => {
 		}
 
 		previousOutput = output;
-		stream.write('\x1b[?2026h' + ansiEscapes.eraseLines(previousLineCount) + output + '\x1b[?2026l');
+
+		// Calculate cursor position when showCursor is true
+		let cursorPosition = '';
+		if (showCursor && str.length > 0) {
+			// Count zero-width space markers to determine how many cells to move back
+			// This allows components to control cursor position by adding multiple markers
+			const zeroWidthSpaceCount = (str.match(/\u200B/g) || []).length;
+			if (zeroWidthSpaceCount > 0) {
+				// Move cursor back N cells to position it correctly
+				cursorPosition = `\x1b[${zeroWidthSpaceCount}D`;
+			}
+		}
+
+		stream.write('\x1b[?2026h' + ansiEscapes.eraseLines(previousLineCount) + output + cursorPosition + '\x1b[?2026l');
 		previousLineCount = output.split('\n').length;
 	};
 
