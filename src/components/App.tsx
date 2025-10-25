@@ -66,6 +66,9 @@ export default class App extends PureComponent<Props, State> {
 	cursorQueryTimeout?: NodeJS.Timeout;
 	pendingCursorPositionRequest?: () => void;
 
+	// Constants for cursor position query
+	static readonly CURSOR_POSITION_TIMEOUT_MS = 100;
+
 	// Determines if TTY is supported on the provided stdin
 	isRawModeSupported(): boolean {
 		return this.props.stdin.isTTY;
@@ -148,6 +151,12 @@ export default class App extends PureComponent<Props, State> {
 	}
 
 	override componentWillUnmount() {
+		// Clean up cursor position query timeout if pending
+		if (this.cursorQueryTimeout) {
+			clearTimeout(this.cursorQueryTimeout);
+			this.cursorQueryTimeout = undefined;
+		}
+
 		cliCursor.show(this.props.stdout);
 
 		// ignore calling setRawMode on an handle stdin it cannot be called
@@ -218,7 +227,7 @@ export default class App extends PureComponent<Props, State> {
 				// eslint-disable-next-line unicorn/no-hex-escape, no-control-regex
 				const regex = /\x1b\[(\d+);(\d+)R/;
 				const match = regex.exec(this.stdinBuffer);
-				if (match?.[1] && match[2]) {
+				if (match && match[1] && match[2]) {
 					const row = Number.parseInt(match[1], 10);
 					const col = Number.parseInt(match[2], 10);
 
@@ -279,6 +288,22 @@ export default class App extends PureComponent<Props, State> {
 		}
 	};
 
+	/**
+	 * Request the current cursor position from the terminal using DSR (Device Status Report).
+	 *
+	 * The terminal will respond with ESC[{row};{col}R, which will be parsed from stdin.
+	 * If the terminal doesn't respond within the timeout period, the callback will be
+	 * called with (1, 1) as a fallback to allow the application to continue.
+	 *
+	 * @param callback - Called with (row, col) when terminal responds, or (1, 1) on timeout
+	 *
+	 * @example
+	 * ```typescript
+	 * this.requestCursorPosition((row, col) => {
+	 *   console.log(`Cursor is at row ${row}, column ${col}`);
+	 * });
+	 * ```
+	 */
 	requestCursorPosition = (
 		callback: (row: number, col: number) => void,
 	): void => {
@@ -291,17 +316,27 @@ export default class App extends PureComponent<Props, State> {
 			return;
 		}
 
+		// Handle race condition: if a query is already pending, clear it
+		if (this.cursorQueryTimeout) {
+			clearTimeout(this.cursorQueryTimeout);
+			this.cursorQueryTimeout = undefined;
+		}
+
 		// Set callback
 		this.cursorPositionCallback = callback;
 
-		// Set timeout (100ms) in case terminal doesn't respond
+		// Set timeout in case terminal doesn't respond
 		this.cursorQueryTimeout = setTimeout(() => {
 			this.cursorQueryTimeout = undefined;
+			const timeoutCallback = this.cursorPositionCallback;
 			this.cursorPositionCallback = undefined;
 			this.stdinBuffer = '';
-			// Terminal didn't respond - this is unexpected but shouldn't crash
-			// Components using this should handle being called with invalid positions
-		}, 100);
+			// Terminal didn't respond - fall back to row 1, col 1
+			// This allows the application to start even if DSR is not supported
+			if (timeoutCallback) {
+				timeoutCallback(1, 1);
+			}
+		}, App.CURSOR_POSITION_TIMEOUT_MS);
 
 		// Send cursor position query (DSR - Device Status Report)
 		// Write directly to stdout, bypassing Ink's rendering system
