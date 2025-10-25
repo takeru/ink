@@ -23,12 +23,13 @@ const create = (stream: Writable, {showCursor = false} = {}): LogUpdate => {
 	let previousCursorPosition: {rowOffset: number; col: number} | undefined;
 	let previousMarkerPosition: {row: number; col: number} | undefined;
 
-	// Get terminal height (fallback to 24 if not available)
+	// Get terminal height (fallback to default if not available)
+	const DEFAULT_TERMINAL_HEIGHT = 24;
 	const getTerminalHeight = (): number => {
 		if ('rows' in stream && typeof stream.rows === 'number') {
 			return stream.rows;
 		}
-		return 24; // Standard terminal height
+		return DEFAULT_TERMINAL_HEIGHT; // Standard terminal height fallback
 	};
 
 	const render = (str: string) => {
@@ -40,8 +41,19 @@ const create = (stream: Writable, {showCursor = false} = {}): LogUpdate => {
 		// Detect and remove cursor marker
 		const {cleaned, position} = findAndRemoveMarker(str);
 
-		// Fix for terminal rendering: Some terminals may render the marker character with width 1
-		// Add padding to cursor line to compensate for the removed marker
+		/**
+		 * Border alignment fix for marker removal
+		 *
+		 * Problem: When we remove the marker character (U+E000), some terminals
+		 * still reserve 1 cell of width for it, causing the right border │ to
+		 * shift left by 1 character on the cursor line only.
+		 *
+		 * Solution: Insert a compensating space before the right border to push
+		 * it back to the correct column, maintaining visual alignment across all lines.
+		 *
+		 * This is a workaround for terminal rendering inconsistencies where the
+		 * marker character is not truly zero-width.
+		 */
 		let fixedCleaned = cleaned;
 		if (position) {
 			const lines = cleaned.split('\n');

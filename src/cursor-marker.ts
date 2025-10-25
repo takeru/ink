@@ -12,8 +12,21 @@ import stringWidth from 'string-width';
 
 /**
  * Cursor position marker character (Private Use Area)
- * Using U+E000 from Private Use Area which has no standard definition
- * This is more reliable than zero-width characters which some terminals render with width 1
+ *
+ * This invisible character (U+E000) is used to mark where the terminal cursor
+ * should be positioned in the rendered output. It's essential for IME (Input Method Editor)
+ * support, as the IME candidate window needs to appear at the correct cursor position.
+ *
+ * Using U+E000 from Private Use Area which has no standard definition.
+ * This is more reliable than zero-width characters which some terminals render with width 1.
+ *
+ * @example
+ * ```tsx
+ * import {CURSOR_MARKER} from 'ink/cursor-marker';
+ *
+ * // Place marker before cursor position
+ * <Text>{beforeText}{CURSOR_MARKER}<Text inverse>{cursorChar}</Text>{afterText}</Text>
+ * ```
  */
 // eslint-disable-next-line @typescript-eslint/naming-convention
 export const CURSOR_MARKER = '\uE000';

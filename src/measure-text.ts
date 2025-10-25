@@ -10,7 +10,8 @@ type Output = {
 
 const measureText = (text: string): Output => {
 	// Remove cursor marker before measuring to get accurate width
-	const textWithoutMarker = text.replaceAll(CURSOR_MARKER, '');
+	// Only one marker should exist, so replace() is sufficient
+	const textWithoutMarker = text.replace(CURSOR_MARKER, '');
 
 	if (textWithoutMarker.length === 0) {
 		return {
