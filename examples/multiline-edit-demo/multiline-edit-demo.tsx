@@ -1,6 +1,7 @@
 import React, {useState, useMemo} from 'react';
 import {render, Text, Box, useInput} from '../../src/index.js';
 import stringWidth from 'string-width';
+import {CURSOR_MARKER} from '../../src/cursor-marker.js';
 
 /**
  * This app demonstrates the cursor positioning issue with multi-line text.
@@ -237,6 +238,7 @@ function MultilineCursorTest() {
 						if (line === '' && before === '' && after === '') {
 							return (
 								<Text key={`line-${index}`}>
+									{CURSOR_MARKER}
 									<Text inverse> </Text>
 								</Text>
 							);
@@ -245,6 +247,7 @@ function MultilineCursorTest() {
 						return (
 							<Text key={`line-${index}`}>
 								{before}
+								{CURSOR_MARKER}
 								<Text inverse>{cursor}</Text>
 								{after}
 							</Text>

@@ -50,6 +50,8 @@ export default class Ink {
 	private exitPromise?: Promise<void>;
 	private restoreConsole?: () => void;
 	private readonly unsubscribeResize?: () => void;
+	private appInstance: App | null = null;
+	private isInitialized: boolean;
 
 	constructor(options: Options) {
 		autoBind(this);
@@ -94,6 +96,10 @@ export default class Ink {
 		// so that it's rerendered every time, not just new static parts, like in non-debug mode
 		this.fullStaticOutput = '';
 
+		// In CI or when screen reader is enabled (cursor hidden), skip initialization wait
+		// Otherwise wait for cursor position before first render
+		this.isInitialized = isInCi || this.isScreenReaderEnabled;
+
 		// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 		this.container = reconciler.createContainer(
 			this.rootNode,
@@ -136,8 +142,18 @@ export default class Ink {
 	}
 
 	resized = () => {
+		// Clear output and reset cursor position on resize
+		this.log.clear();
 		this.calculateLayout();
 		this.onRender();
+
+		// Re-query cursor position after resize
+		if (this.appInstance) {
+			this.appInstance.requestCursorPosition((row, _col) => {
+				this.log.setOutputStartRow(row);
+				this.onRender();
+			});
+		}
 	};
 
 	resolveExitPromise: () => void = () => {};
@@ -160,6 +176,11 @@ export default class Ink {
 
 	onRender: () => void = () => {
 		if (this.isUnmounted) {
+			return;
+		}
+
+		// Wait for initialization (cursor position query) before first render
+		if (!this.isInitialized) {
 			return;
 		}
 
@@ -235,13 +256,11 @@ export default class Ink {
 		}
 
 		if (this.lastOutputHeight >= this.options.stdout.rows) {
-			this.options.stdout.write(
-				'\x1b[?2026h' + ansiEscapes.clearTerminal + this.fullStaticOutput + output + '\x1b[?2026l',
-			);
-			this.lastOutput = output;
-			this.lastOutputHeight = outputHeight;
-			this.log.sync(output);
-			return;
+			// Clear terminal and reset, then use normal log path for cursor support
+			this.options.stdout.write('\x1b[?2026h' + ansiEscapes.clearTerminal + this.fullStaticOutput + '\x1b[?2026l');
+			this.lastOutput = '';
+			this.lastOutputHeight = 0;
+			// Fall through to normal log path
 		}
 
 		// To ensure static output is cleanly rendered before main output, clear main output first
@@ -259,12 +278,31 @@ export default class Ink {
 		this.lastOutputHeight = outputHeight;
 	};
 
+	handleCursorPositionReceived = (row: number, _col: number) => {
+		// Use the current cursor position as the output start row
+		// Don't clear screen to preserve previous command output
+		this.log.setOutputStartRow(row);
+
+		// Mark as initialized
+		this.isInitialized = true;
+
+		// Trigger first render
+		this.onRender();
+	};
+
 	render(node: ReactNode): void {
 		const tree = (
 			<AccessibilityContext.Provider
 				value={{isScreenReaderEnabled: this.isScreenReaderEnabled}}
 			>
 				<App
+					ref={(instance) => {
+						if (instance && instance !== this.appInstance) {
+							this.appInstance = instance;
+							// Set callback for cursor position received
+							instance.onCursorPositionReceived = this.handleCursorPositionReceived;
+						}
+					}}
 					stdin={this.options.stdin}
 					stdout={this.options.stdout}
 					stderr={this.options.stderr}
