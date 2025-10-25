@@ -59,6 +59,13 @@ export default class App extends PureComponent<Props, State> {
 	// eslint-disable-next-line @typescript-eslint/naming-convention
 	internal_eventEmitter = new EventEmitter();
 
+	// Cursor position query handling
+	onCursorPositionReceived?: (row: number, col: number) => void;
+	cursorPositionCallback?: (row: number, col: number) => void;
+	stdinBuffer = '';
+	cursorQueryTimeout?: NodeJS.Timeout;
+	pendingCursorPositionRequest?: () => void;
+
 	// Determines if TTY is supported on the provided stdin
 	isRawModeSupported(): boolean {
 		return this.props.stdin.isTTY;
@@ -130,6 +137,14 @@ export default class App extends PureComponent<Props, State> {
 		// Note: Cursor hiding is disabled to support IME (Input Method Editor)
 		// The cursor visibility is now managed by the showCursor option in ink.tsx
 		// cliCursor.hide(this.props.stdout);
+
+		// Query cursor position for absolute positioning (IME support)
+		// This will be queued until raw mode is enabled
+		this.requestCursorPosition((row, col) => {
+			if (this.onCursorPositionReceived) {
+				this.onCursorPositionReceived(row, col);
+			}
+		});
 	}
 
 	override componentWillUnmount() {
@@ -170,7 +185,16 @@ export default class App extends PureComponent<Props, State> {
 				stdin.addListener('readable', this.handleReadable);
 			}
 
+			// Increment count BEFORE executing pending requests so they don't get queued again
 			this.rawModeEnabledCount++;
+
+			// Execute any pending cursor position request now that raw mode is enabled
+			if (this.pendingCursorPositionRequest) {
+				const request = this.pendingCursorPositionRequest;
+				this.pendingCursorPositionRequest = undefined;
+				request();
+			}
+
 			return;
 		}
 
@@ -186,8 +210,47 @@ export default class App extends PureComponent<Props, State> {
 		let chunk;
 		// eslint-disable-next-line @typescript-eslint/ban-types
 		while ((chunk = this.props.stdin.read() as string | null) !== null) {
-			this.handleInput(chunk);
-			this.internal_eventEmitter.emit('input', chunk);
+			// If waiting for cursor position response, buffer all input
+			if (this.cursorPositionCallback) {
+				this.stdinBuffer += chunk;
+
+				// Check for complete cursor position response: ESC[{row};{col}R
+				// eslint-disable-next-line unicorn/no-hex-escape, no-control-regex
+				const regex = /\x1b\[(\d+);(\d+)R/;
+				const match = regex.exec(this.stdinBuffer);
+				if (match?.[1] && match[2]) {
+					const row = Number.parseInt(match[1], 10);
+					const col = Number.parseInt(match[2], 10);
+
+					// Clear timeout
+					if (this.cursorQueryTimeout) {
+						clearTimeout(this.cursorQueryTimeout);
+						this.cursorQueryTimeout = undefined;
+					}
+
+					// Call the callback
+					const callback = this.cursorPositionCallback;
+					this.cursorPositionCallback = undefined;
+					if (callback) {
+						callback(row, col);
+					}
+
+					// Remove the cursor response from buffer and process remaining data
+					const responseEnd = (match.index ?? 0) + match[0].length;
+					const remaining = this.stdinBuffer.slice(responseEnd);
+					this.stdinBuffer = '';
+
+					// Process any remaining buffered data
+					if (remaining.length > 0) {
+						this.handleInput(remaining);
+						this.internal_eventEmitter.emit('input', remaining);
+					}
+				}
+			} else {
+				// Normal processing when not waiting for cursor response
+				this.handleInput(chunk);
+				this.internal_eventEmitter.emit('input', chunk);
+			}
 		}
 	};
 
@@ -214,6 +277,36 @@ export default class App extends PureComponent<Props, State> {
 				this.focusPrevious();
 			}
 		}
+	};
+
+	requestCursorPosition = (
+		callback: (row: number, col: number) => void,
+	): void => {
+		// If raw mode is not yet enabled, store for later
+		if (this.rawModeEnabledCount === 0) {
+			this.pendingCursorPositionRequest = () => {
+				// This closure captures 'callback'
+				this.requestCursorPosition(callback);
+			};
+			return;
+		}
+
+		// Set callback
+		this.cursorPositionCallback = callback;
+
+		// Set timeout (100ms) in case terminal doesn't respond
+		this.cursorQueryTimeout = setTimeout(() => {
+			this.cursorQueryTimeout = undefined;
+			this.cursorPositionCallback = undefined;
+			this.stdinBuffer = '';
+			// Terminal didn't respond - this is unexpected but shouldn't crash
+			// Components using this should handle being called with invalid positions
+		}, 100);
+
+		// Send cursor position query (DSR - Device Status Report)
+		// Write directly to stdout, bypassing Ink's rendering system
+		// eslint-disable-next-line unicorn/no-hex-escape
+		this.props.stdout.write('\x1b[6n');
 	};
 
 	handleExit = (error?: Error): void => {
