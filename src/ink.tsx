@@ -176,13 +176,13 @@ export default class Ink {
 				this.fullStaticOutput += staticOutput;
 			}
 
-			this.options.stdout.write(this.fullStaticOutput + output);
+			this.options.stdout.write('\x1b[?2026h' + this.fullStaticOutput + output + '\x1b[?2026l');
 			return;
 		}
 
 		if (isInCi) {
 			if (hasStaticOutput) {
-				this.options.stdout.write(staticOutput);
+				this.options.stdout.write('\x1b[?2026h' + staticOutput + '\x1b[?2026l');
 			}
 
 			this.lastOutput = output;
@@ -197,7 +197,7 @@ export default class Ink {
 					this.lastOutputHeight > 0
 						? ansiEscapes.eraseLines(this.lastOutputHeight)
 						: '';
-				this.options.stdout.write(erase + staticOutput);
+				this.options.stdout.write('\x1b[?2026h' + erase + staticOutput + '\x1b[?2026l');
 				// After erasing, the last output is gone, so we should reset its height
 				this.lastOutputHeight = 0;
 			}
@@ -215,13 +215,13 @@ export default class Ink {
 
 			// If we haven't erased yet, do it now.
 			if (hasStaticOutput) {
-				this.options.stdout.write(wrappedOutput);
+				this.options.stdout.write('\x1b[?2026h' + wrappedOutput + '\x1b[?2026l');
 			} else {
 				const erase =
 					this.lastOutputHeight > 0
 						? ansiEscapes.eraseLines(this.lastOutputHeight)
 						: '';
-				this.options.stdout.write(erase + wrappedOutput);
+				this.options.stdout.write('\x1b[?2026h' + erase + wrappedOutput + '\x1b[?2026l');
 			}
 
 			this.lastOutput = output;
@@ -236,7 +236,7 @@ export default class Ink {
 
 		if (this.lastOutputHeight >= this.options.stdout.rows) {
 			this.options.stdout.write(
-				ansiEscapes.clearTerminal + this.fullStaticOutput + output,
+				'\x1b[?2026h' + ansiEscapes.clearTerminal + this.fullStaticOutput + output + '\x1b[?2026l',
 			);
 			this.lastOutput = output;
 			this.lastOutputHeight = outputHeight;
@@ -247,7 +247,7 @@ export default class Ink {
 		// To ensure static output is cleanly rendered before main output, clear main output first
 		if (hasStaticOutput) {
 			this.log.clear();
-			this.options.stdout.write(staticOutput);
+			this.options.stdout.write('\x1b[?2026h' + staticOutput + '\x1b[?2026l');
 			this.log(output);
 		}
 
