@@ -307,4 +307,4 @@ function MultilineCursorTest() {
 	);
 }
 
-render(<MultilineCursorTest />);
+render(<MultilineCursorTest />, {enableImeCursor: true});

@@ -22,6 +22,7 @@ type Props = {
 	readonly writeToStderr: (data: string) => void;
 	readonly exitOnCtrlC: boolean;
 	readonly onExit: (error?: Error) => void;
+	readonly enableImeCursor: boolean;
 };
 
 type State = {
@@ -46,10 +47,6 @@ export default class App extends PureComponent<Props, State> {
 		return {error};
 	}
 
-	static get cursorPositionTimeoutMs(): number {
-		return 100;
-	}
-
 	override state = {
 		isFocusEnabled: true,
 		activeFocusId: undefined,
@@ -62,13 +59,6 @@ export default class App extends PureComponent<Props, State> {
 	rawModeEnabledCount = 0;
 	// eslint-disable-next-line @typescript-eslint/naming-convention
 	internal_eventEmitter = new EventEmitter();
-
-	// Cursor position query handling
-	onCursorPositionReceived?: (row: number, col: number) => void;
-	cursorPositionCallback?: (row: number, col: number) => void;
-	stdinBuffer = '';
-	cursorQueryTimeout?: NodeJS.Timeout;
-	pendingCursorPositionRequest?: () => void;
 
 	// Determines if TTY is supported on the provided stdin
 	isRawModeSupported(): boolean {
@@ -138,22 +128,19 @@ export default class App extends PureComponent<Props, State> {
 	}
 
 	override componentDidMount() {
-		// Note: Cursor hiding is disabled to support IME (Input Method Editor)
-		// The cursor visibility is now managed by the showCursor option in ink.tsx
-		// cliCursor.hide(this.props.stdout);
-
-		// Cursor position query is initiated by ink.tsx when needed (non-CI environments)
-		// This is to avoid interfering with tests that expect specific stdout.write() counts
+		// When IME cursor is enabled, log-update controls cursor visibility
+		// Otherwise, hide cursor globally for the app
+		if (!this.props.enableImeCursor) {
+			cliCursor.hide(this.props.stdout);
+		}
 	}
 
 	override componentWillUnmount() {
-		// Clean up cursor position query timeout if pending
-		if (this.cursorQueryTimeout) {
-			clearTimeout(this.cursorQueryTimeout);
-			this.cursorQueryTimeout = undefined;
+		// When IME cursor is enabled, log-update handles cursor restoration
+		// Otherwise, show cursor on unmount
+		if (!this.props.enableImeCursor) {
+			cliCursor.show(this.props.stdout);
 		}
-
-		cliCursor.show(this.props.stdout);
 
 		// ignore calling setRawMode on an handle stdin it cannot be called
 		if (this.isRawModeSupported()) {
@@ -190,16 +177,7 @@ export default class App extends PureComponent<Props, State> {
 				stdin.addListener('readable', this.handleReadable);
 			}
 
-			// Increment count BEFORE executing pending requests so they don't get queued again
 			this.rawModeEnabledCount++;
-
-			// Execute any pending cursor position request now that raw mode is enabled
-			if (this.pendingCursorPositionRequest) {
-				const request = this.pendingCursorPositionRequest;
-				this.pendingCursorPositionRequest = undefined;
-				request();
-			}
-
 			return;
 		}
 
@@ -215,47 +193,8 @@ export default class App extends PureComponent<Props, State> {
 		let chunk;
 		// eslint-disable-next-line @typescript-eslint/ban-types
 		while ((chunk = this.props.stdin.read() as string | null) !== null) {
-			// If waiting for cursor position response, buffer all input
-			if (this.cursorPositionCallback) {
-				this.stdinBuffer += chunk;
-
-				// Check for complete cursor position response: ESC[{row};{col}R
-				// eslint-disable-next-line no-control-regex
-				const regex = /\u001B\[(\d+);(\d+)R/;
-				const match = regex.exec(this.stdinBuffer);
-				if (match?.[1] && match[2]) {
-					const row = Number.parseInt(match[1], 10);
-					const col = Number.parseInt(match[2], 10);
-
-					// Clear timeout
-					if (this.cursorQueryTimeout) {
-						clearTimeout(this.cursorQueryTimeout);
-						this.cursorQueryTimeout = undefined;
-					}
-
-					// Call the callback
-					const callback = this.cursorPositionCallback;
-					this.cursorPositionCallback = undefined;
-					if (callback) {
-						callback(row, col);
-					}
-
-					// Remove the cursor response from buffer and process remaining data
-					const responseEnd = (match.index ?? 0) + match[0].length;
-					const remaining = this.stdinBuffer.slice(responseEnd);
-					this.stdinBuffer = '';
-
-					// Process any remaining buffered data
-					if (remaining.length > 0) {
-						this.handleInput(remaining);
-						this.internal_eventEmitter.emit('input', remaining);
-					}
-				}
-			} else {
-				// Normal processing when not waiting for cursor response
-				this.handleInput(chunk);
-				this.internal_eventEmitter.emit('input', chunk);
-			}
+			this.handleInput(chunk);
+			this.internal_eventEmitter.emit('input', chunk);
 		}
 	};
 
@@ -282,62 +221,6 @@ export default class App extends PureComponent<Props, State> {
 				this.focusPrevious();
 			}
 		}
-	};
-
-	/**
-	 * Request the current cursor position from the terminal using DSR (Device Status Report).
-	 *
-	 * The terminal will respond with ESC[{row};{col}R, which will be parsed from stdin.
-	 * If the terminal doesn't respond within the timeout period, the callback will be
-	 * called with (1, 1) as a fallback to allow the application to continue.
-	 *
-	 * @param callback - Called with (row, col) when terminal responds, or (1, 1) on timeout
-	 *
-	 * @example
-	 * ```typescript
-	 * this.requestCursorPosition((row, col) => {
-	 *   console.log(`Cursor is at row ${row}, column ${col}`);
-	 * });
-	 * ```
-	 */
-	requestCursorPosition = (
-		callback: (row: number, col: number) => void,
-	): void => {
-		// If raw mode is not yet enabled, store for later
-		if (this.rawModeEnabledCount === 0) {
-			this.pendingCursorPositionRequest = () => {
-				// This closure captures 'callback'
-				this.requestCursorPosition(callback);
-			};
-
-			return;
-		}
-
-		// Handle race condition: if a query is already pending, clear it
-		if (this.cursorQueryTimeout) {
-			clearTimeout(this.cursorQueryTimeout);
-			this.cursorQueryTimeout = undefined;
-		}
-
-		// Set callback
-		this.cursorPositionCallback = callback;
-
-		// Set timeout in case terminal doesn't respond
-		this.cursorQueryTimeout = setTimeout(() => {
-			this.cursorQueryTimeout = undefined;
-			const timeoutCallback = this.cursorPositionCallback;
-			this.cursorPositionCallback = undefined;
-			this.stdinBuffer = '';
-			// Terminal didn't respond - fall back to row 1, col 1
-			// This allows the application to start even if DSR is not supported
-			if (timeoutCallback) {
-				timeoutCallback(1, 1);
-			}
-		}, App.cursorPositionTimeoutMs);
-
-		// Send cursor position query (DSR - Device Status Report)
-		// Write directly to stdout, bypassing Ink's rendering system
-		this.props.stdout.write('\u001B[6n');
 	};
 
 	handleExit = (error?: Error): void => {

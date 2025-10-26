@@ -30,6 +30,14 @@ export type Options = {
 	isScreenReaderEnabled?: boolean;
 	waitUntilExit?: () => Promise<void>;
 	maxFps?: number;
+	/**
+	 * Enable IME (Input Method Editor) cursor positioning support.
+	 * When enabled, the terminal cursor will be positioned at the actual input location
+	 * for proper IME candidate window placement (useful for CJK input).
+	 *
+	 * @default false
+	 */
+	enableImeCursor?: boolean;
 };
 
 export default class Ink {
@@ -37,6 +45,7 @@ export default class Ink {
 	private readonly log: LogUpdate;
 	private readonly throttledLog: LogUpdate;
 	private readonly isScreenReaderEnabled: boolean;
+	private readonly enableImeCursor: boolean;
 
 	// Ignore last render after unmounting a tree to prevent empty output before exit
 	private isUnmounted: boolean;
@@ -51,7 +60,6 @@ export default class Ink {
 	private restoreConsole?: () => void;
 	private readonly unsubscribeResize?: () => void;
 	private appInstance: App | undefined = undefined;
-	private isInitialized: boolean;
 
 	constructor(options: Options) {
 		autoBind(this);
@@ -77,7 +85,11 @@ export default class Ink {
 				});
 
 		this.rootNode.onImmediateRender = this.onRender;
-		this.log = logUpdate.create(options.stdout, {showCursor: true});
+		// IME cursor control is disabled by default, must be explicitly enabled
+		this.enableImeCursor = options.enableImeCursor ?? false;
+		this.log = logUpdate.create(options.stdout, {
+			showCursor: this.enableImeCursor,
+		});
 		this.throttledLog = unthrottled
 			? this.log
 			: (throttle(this.log, undefined, {
@@ -95,10 +107,6 @@ export default class Ink {
 		// This variable is used only in debug mode to store full static output
 		// so that it's rerendered every time, not just new static parts, like in non-debug mode
 		this.fullStaticOutput = '';
-
-		// In CI or when screen reader is enabled (cursor hidden), skip initialization wait
-		// Otherwise wait for cursor position before first render
-		this.isInitialized = isInCi || this.isScreenReaderEnabled;
 
 		// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 		this.container = reconciler.createContainer(
@@ -142,18 +150,8 @@ export default class Ink {
 	}
 
 	resized = () => {
-		// Clear output and reset cursor position on resize
-		this.log.clear();
 		this.calculateLayout();
 		this.onRender();
-
-		// Re-query cursor position after resize
-		if (this.appInstance) {
-			this.appInstance.requestCursorPosition((row, _col) => {
-				this.log.setOutputStartRow(row);
-				this.onRender();
-			});
-		}
 	};
 
 	resolveExitPromise: () => void = () => {};
@@ -176,11 +174,6 @@ export default class Ink {
 
 	onRender: () => void = () => {
 		if (this.isUnmounted) {
-			return;
-		}
-
-		// Wait for initialization (cursor position query) before first render
-		if (!this.isInitialized) {
 			return;
 		}
 
@@ -280,18 +273,6 @@ export default class Ink {
 		this.lastOutputHeight = outputHeight;
 	};
 
-	handleCursorPositionReceived = (row: number, _col: number) => {
-		// Use the current cursor position as the output start row
-		// Don't clear screen to preserve previous command output
-		this.log.setOutputStartRow(row);
-
-		// Mark as initialized
-		this.isInitialized = true;
-
-		// Trigger first render
-		this.onRender();
-	};
-
 	render(node: ReactNode): void {
 		const tree = (
 			<AccessibilityContext.Provider
@@ -301,24 +282,15 @@ export default class Ink {
 					ref={instance => {
 						if (instance && instance !== this.appInstance) {
 							this.appInstance = instance;
-							// Set callback for cursor position received
-							instance.onCursorPositionReceived =
-								this.handleCursorPositionReceived;
-
-							// Request cursor position only in non-CI environments
-							if (!this.isInitialized) {
-								instance.requestCursorPosition((row, col) => {
-									this.handleCursorPositionReceived(row, col);
-								});
-							}
 						}
 					}}
+					enableImeCursor={this.enableImeCursor}
+					exitOnCtrlC={this.options.exitOnCtrlC}
+					stderr={this.options.stderr}
 					stdin={this.options.stdin}
 					stdout={this.options.stdout}
-					stderr={this.options.stderr}
-					writeToStdout={this.writeToStdout}
 					writeToStderr={this.writeToStderr}
-					exitOnCtrlC={this.options.exitOnCtrlC}
+					writeToStdout={this.writeToStdout}
 					onExit={this.unmount}
 				>
 					{node}

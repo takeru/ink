@@ -9,7 +9,6 @@ export type LogUpdate = {
 	clear: () => void;
 	done: () => void;
 	sync: (str: string) => void;
-	setOutputStartRow: (row: number) => void;
 	(str: string): void;
 };
 
@@ -18,26 +17,25 @@ const create = (stream: Writable, {showCursor = false} = {}): LogUpdate => {
 	let previousOutput = '';
 	let hasHiddenCursor = false;
 	let isCursorVisible = false;
-	let outputStartRow: number | undefined;
-	let outputEndPosition: {rowOffset: number; col: number} | undefined;
-	let previousCursorPosition: {rowOffset: number; col: number} | undefined;
 	let previousMarkerPosition: {row: number; col: number} | undefined;
-
-	// Get terminal height (fallback to default if not available)
-	const defaultTerminalHeight = 24;
-
-	const getTerminalHeight = (): number => {
-		if ('rows' in stream && typeof stream.rows === 'number') {
-			return stream.rows;
-		}
-
-		return defaultTerminalHeight; // Standard terminal height fallback
-	};
 
 	const render = (str: string) => {
 		if (!showCursor && !hasHiddenCursor) {
 			cliCursor.hide();
 			hasHiddenCursor = true;
+		}
+
+		// When cursor control is disabled, use traditional rendering (no marker processing)
+		if (!showCursor) {
+			const output = str + '\n';
+			if (output === previousOutput) {
+				return;
+			}
+
+			previousOutput = output;
+			stream.write(ansiEscapes.eraseLines(previousLineCount) + output);
+			previousLineCount = output.split('\n').length;
+			return;
 		}
 
 		// Detect and remove cursor marker
@@ -108,31 +106,12 @@ const create = (stream: Writable, {showCursor = false} = {}): LogUpdate => {
 		previousOutput = output;
 		previousMarkerPosition = position ? {...position} : undefined;
 
-		// After eraseLines(), cursor will be at the start of the cleared area (row 0, col 0)
-		// We need to move it to output end position for the next eraseLines() to work correctly
-		let restoreCursor = '';
-		if (showCursor && previousCursorPosition && outputEndPosition) {
-			// After eraseLines(), cursor is at (outputStartRow, col 0)
-			// We need to move to outputEndPosition for consistency
-
-			// Move down to the output end row
-			if (outputEndPosition.rowOffset > 0) {
-				restoreCursor += `\u001B[${outputEndPosition.rowOffset}B`; // Down
-			}
-
-			// Move right to the output end column
-			if (outputEndPosition.col > 0) {
-				restoreCursor += `\u001B[${outputEndPosition.col}C`; // Right
-			}
-		}
-
 		// Cursor control
 		let cursorControl = '';
 
 		if (showCursor) {
-			// Only show cursor when we have both position marker and output start row
-			const shouldShowCursor =
-				position !== undefined && outputStartRow !== undefined;
+			// Only show cursor when we have position marker
+			const shouldShowCursor = position !== undefined;
 
 			// Only change cursor visibility when state changes
 			if (shouldShowCursor && !isCursorVisible) {
@@ -144,7 +123,7 @@ const create = (stream: Writable, {showCursor = false} = {}): LogUpdate => {
 			}
 
 			// Move cursor to marker position using RELATIVE positioning only
-			if (position && outputStartRow !== undefined) {
+			if (position) {
 				// Calculate where cursor will be after writing output
 				const lines = output.split('\n');
 				const lastLine = lines.at(-1) ?? '';
@@ -183,62 +162,43 @@ const create = (stream: Writable, {showCursor = false} = {}): LogUpdate => {
 			}
 		}
 
-		const finalOutput =
-			restoreCursor +
-			ansiEscapes.eraseLines(previousLineCount) +
-			output +
-			cursorControl;
+		// When cursor control is enabled, we need to handle cursor position carefully:
+		// 1. Restore cursor to end of output (where it was saved last time)
+		// 2. Erase previous output
+		// 3. Write new output
+		// 4. Save cursor position at end of output
+		// 5. Move cursor to marker position
+		let finalOutput = '';
+
+		if (showCursor && position && previousMarkerPosition) {
+			// Restore cursor to the end of output from last render
+			// (only if we previously saved a position)
+			finalOutput += '\u001B[u';
+		}
+
+		finalOutput += ansiEscapes.eraseLines(previousLineCount) + output;
+
+		if (showCursor && position) {
+			// Save cursor position at end of output
+			finalOutput += '\u001B[s';
+		}
+
+		finalOutput += cursorControl;
 
 		stream.write(finalOutput);
 
 		previousLineCount = output.split('\n').length;
-
-		// Record output end position for next render (as offset from outputStartRow)
-		if (showCursor && outputStartRow !== undefined) {
-			const lines = output.split('\n');
-			const lastLine = lines.at(-1) ?? '';
-			// Use stringWidth to get actual display width (handles multi-byte chars)
-			const lastLineLength = stringWidth(stripAnsi(lastLine));
-
-			// Detect if scroll occurred and adjust outputStartRow
-			const terminalHeight = getTerminalHeight();
-			const outputEndRow = outputStartRow + lines.length - 1;
-
-			if (outputEndRow > terminalHeight) {
-				// Scroll occurred - adjust outputStartRow
-				const scrollAmount = outputEndRow - terminalHeight;
-				outputStartRow = Math.max(1, outputStartRow - scrollAmount);
-			}
-
-			outputEndPosition = {
-				rowOffset: lines.length - 1, // Offset from outputStartRow
-				col: lastLineLength, // 0-indexed for easier calculation
-			};
-
-			// Record cursor position (either IME position or output end)
-			if (position) {
-				previousCursorPosition = {
-					rowOffset: position.row,
-					col: position.col,
-				};
-			} else {
-				// No cursor movement, so cursor stays at output end
-				previousCursorPosition = {...outputEndPosition};
-			}
-		}
 	};
 
 	render.clear = () => {
 		stream.write(ansiEscapes.eraseLines(previousLineCount));
 		previousOutput = '';
 		previousLineCount = 0;
-		// Note: outputStartRow is NOT reset on clear (only on resize)
 	};
 
 	render.done = () => {
 		previousOutput = '';
 		previousLineCount = 0;
-		outputStartRow = undefined;
 
 		if (!showCursor) {
 			cliCursor.show();
@@ -249,12 +209,6 @@ const create = (stream: Writable, {showCursor = false} = {}): LogUpdate => {
 		if (!isCursorVisible) {
 			stream.write('\u001B[?25h'); // Show cursor
 			isCursorVisible = true;
-		}
-	};
-
-	render.setOutputStartRow = (row: number) => {
-		if (showCursor && outputStartRow === undefined) {
-			outputStartRow = row;
 		}
 	};
 
