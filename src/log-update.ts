@@ -24,12 +24,14 @@ const create = (stream: Writable, {showCursor = false} = {}): LogUpdate => {
 	let previousMarkerPosition: {row: number; col: number} | undefined;
 
 	// Get terminal height (fallback to default if not available)
-	const DEFAULT_TERMINAL_HEIGHT = 24;
+	const defaultTerminalHeight = 24;
+
 	const getTerminalHeight = (): number => {
 		if ('rows' in stream && typeof stream.rows === 'number') {
 			return stream.rows;
 		}
-		return DEFAULT_TERMINAL_HEIGHT; // Standard terminal height fallback
+
+		return defaultTerminalHeight; // Standard terminal height fallback
 	};
 
 	const render = (str: string) => {
@@ -64,7 +66,10 @@ const create = (stream: Writable, {showCursor = false} = {}): LogUpdate => {
 				let paddedLine: string;
 				if (lastBorderIndex >= 0) {
 					// Insert space before the right border
-					paddedLine = cursorLine.slice(0, lastBorderIndex) + ' ' + cursorLine.slice(lastBorderIndex);
+					paddedLine =
+						cursorLine.slice(0, lastBorderIndex) +
+						' ' +
+						cursorLine.slice(lastBorderIndex);
 				} else {
 					// No border found, add space at the end
 					paddedLine = cursorLine + ' ';
@@ -87,10 +92,14 @@ const create = (stream: Writable, {showCursor = false} = {}): LogUpdate => {
 		}
 
 		// Check if both output AND cursor position are unchanged
-		const markerPositionChanged = position !== previousMarkerPosition &&
-			!(position && previousMarkerPosition &&
-			  position.row === previousMarkerPosition.row &&
-			  position.col === previousMarkerPosition.col);
+		const markerPositionChanged =
+			position !== previousMarkerPosition &&
+			!(
+				position &&
+				previousMarkerPosition &&
+				position.row === previousMarkerPosition.row &&
+				position.col === previousMarkerPosition.col
+			);
 
 		if (output === previousOutput && !markerPositionChanged) {
 			return;
@@ -108,12 +117,12 @@ const create = (stream: Writable, {showCursor = false} = {}): LogUpdate => {
 
 			// Move down to the output end row
 			if (outputEndPosition.rowOffset > 0) {
-				restoreCursor += `\x1b[${outputEndPosition.rowOffset}B`; // Down
+				restoreCursor += `\u001B[${outputEndPosition.rowOffset}B`; // Down
 			}
 
 			// Move right to the output end column
 			if (outputEndPosition.col > 0) {
-				restoreCursor += `\x1b[${outputEndPosition.col}C`; // Right
+				restoreCursor += `\u001B[${outputEndPosition.col}C`; // Right
 			}
 		}
 
@@ -122,14 +131,15 @@ const create = (stream: Writable, {showCursor = false} = {}): LogUpdate => {
 
 		if (showCursor) {
 			// Only show cursor when we have both position marker and output start row
-			const shouldShowCursor = position !== undefined && outputStartRow !== undefined;
+			const shouldShowCursor =
+				position !== undefined && outputStartRow !== undefined;
 
 			// Only change cursor visibility when state changes
 			if (shouldShowCursor && !isCursorVisible) {
-				cursorControl += '\x1b[?25h'; // Show cursor
+				cursorControl += '\u001B[?25h'; // Show cursor
 				isCursorVisible = true;
 			} else if (!shouldShowCursor && isCursorVisible) {
-				cursorControl += '\x1b[?25l'; // Hide cursor
+				cursorControl += '\u001B[?25l'; // Hide cursor
 				isCursorVisible = false;
 			}
 
@@ -137,7 +147,7 @@ const create = (stream: Writable, {showCursor = false} = {}): LogUpdate => {
 			if (position && outputStartRow !== undefined) {
 				// Calculate where cursor will be after writing output
 				const lines = output.split('\n');
-				const lastLine = lines[lines.length - 1] || '';
+				const lastLine = lines.at(-1) ?? '';
 				const endRow = lines.length - 1; // Relative to output start
 				const endCol = stringWidth(stripAnsi(lastLine)); // Use stringWidth for multi-byte chars
 
@@ -156,24 +166,25 @@ const create = (stream: Writable, {showCursor = false} = {}): LogUpdate => {
 				// First move vertically
 				if (rowDiff > 0) {
 					// Move down
-					cursorControl += `\x1b[${rowDiff}B`;
+					cursorControl += `\u001B[${rowDiff}B`;
 				} else if (rowDiff < 0) {
 					// Move up
-					cursorControl += `\x1b[${-rowDiff}A`;
+					cursorControl += `\u001B[${-rowDiff}A`;
 				}
 
 				// Then move horizontally
 				if (colDiff > 0) {
 					// Move right
-					cursorControl += `\x1b[${colDiff}C`;
+					cursorControl += `\u001B[${colDiff}C`;
 				} else if (colDiff < 0) {
 					// Move left
-					cursorControl += `\x1b[${-colDiff}D`;
+					cursorControl += `\u001B[${-colDiff}D`;
 				}
 			}
 		}
 
-		const finalOutput = restoreCursor +
+		const finalOutput =
+			restoreCursor +
 			ansiEscapes.eraseLines(previousLineCount) +
 			output +
 			cursorControl;
@@ -185,7 +196,7 @@ const create = (stream: Writable, {showCursor = false} = {}): LogUpdate => {
 		// Record output end position for next render (as offset from outputStartRow)
 		if (showCursor && outputStartRow !== undefined) {
 			const lines = output.split('\n');
-			const lastLine = lines[lines.length - 1] || '';
+			const lastLine = lines.at(-1) ?? '';
 			// Use stringWidth to get actual display width (handles multi-byte chars)
 			const lastLineLength = stringWidth(stripAnsi(lastLine));
 
@@ -236,7 +247,7 @@ const create = (stream: Writable, {showCursor = false} = {}): LogUpdate => {
 
 		// Always restore cursor visibility on exit
 		if (!isCursorVisible) {
-			stream.write('\x1b[?25h'); // Show cursor
+			stream.write('\u001B[?25h'); // Show cursor
 			isCursorVisible = true;
 		}
 	};

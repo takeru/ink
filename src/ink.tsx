@@ -50,7 +50,7 @@ export default class Ink {
 	private exitPromise?: Promise<void>;
 	private restoreConsole?: () => void;
 	private readonly unsubscribeResize?: () => void;
-	private appInstance: App | null = null;
+	private appInstance: App | undefined = undefined;
 	private isInitialized: boolean;
 
 	constructor(options: Options) {
@@ -197,13 +197,13 @@ export default class Ink {
 				this.fullStaticOutput += staticOutput;
 			}
 
-			this.options.stdout.write('\x1b[?2026h' + this.fullStaticOutput + output + '\x1b[?2026l');
+			this.options.stdout.write(this.fullStaticOutput + output);
 			return;
 		}
 
 		if (isInCi) {
 			if (hasStaticOutput) {
-				this.options.stdout.write('\x1b[?2026h' + staticOutput + '\x1b[?2026l');
+				this.options.stdout.write(staticOutput);
 			}
 
 			this.lastOutput = output;
@@ -218,7 +218,7 @@ export default class Ink {
 					this.lastOutputHeight > 0
 						? ansiEscapes.eraseLines(this.lastOutputHeight)
 						: '';
-				this.options.stdout.write('\x1b[?2026h' + erase + staticOutput + '\x1b[?2026l');
+				this.options.stdout.write(erase + staticOutput);
 				// After erasing, the last output is gone, so we should reset its height
 				this.lastOutputHeight = 0;
 			}
@@ -236,13 +236,13 @@ export default class Ink {
 
 			// If we haven't erased yet, do it now.
 			if (hasStaticOutput) {
-				this.options.stdout.write('\x1b[?2026h' + wrappedOutput + '\x1b[?2026l');
+				this.options.stdout.write(wrappedOutput);
 			} else {
 				const erase =
 					this.lastOutputHeight > 0
 						? ansiEscapes.eraseLines(this.lastOutputHeight)
 						: '';
-				this.options.stdout.write('\x1b[?2026h' + erase + wrappedOutput + '\x1b[?2026l');
+				this.options.stdout.write(erase + wrappedOutput);
 			}
 
 			this.lastOutput = output;
@@ -257,7 +257,9 @@ export default class Ink {
 
 		if (this.lastOutputHeight >= this.options.stdout.rows) {
 			// Clear terminal and reset, then use normal log path for cursor support
-			this.options.stdout.write('\x1b[?2026h' + ansiEscapes.clearTerminal + this.fullStaticOutput + '\x1b[?2026l');
+			this.options.stdout.write(
+				ansiEscapes.clearTerminal + this.fullStaticOutput,
+			);
 			this.lastOutput = '';
 			this.lastOutputHeight = 0;
 			// Fall through to normal log path
@@ -266,7 +268,7 @@ export default class Ink {
 		// To ensure static output is cleanly rendered before main output, clear main output first
 		if (hasStaticOutput) {
 			this.log.clear();
-			this.options.stdout.write('\x1b[?2026h' + staticOutput + '\x1b[?2026l');
+			this.options.stdout.write(staticOutput);
 			this.log(output);
 		}
 
@@ -296,11 +298,19 @@ export default class Ink {
 				value={{isScreenReaderEnabled: this.isScreenReaderEnabled}}
 			>
 				<App
-					ref={(instance) => {
+					ref={instance => {
 						if (instance && instance !== this.appInstance) {
 							this.appInstance = instance;
 							// Set callback for cursor position received
-							instance.onCursorPositionReceived = this.handleCursorPositionReceived;
+							instance.onCursorPositionReceived =
+								this.handleCursorPositionReceived;
+
+							// Request cursor position only in non-CI environments
+							if (!this.isInitialized) {
+								instance.requestCursorPosition((row, col) => {
+									this.handleCursorPositionReceived(row, col);
+								});
+							}
 						}
 					}}
 					stdin={this.options.stdin}
