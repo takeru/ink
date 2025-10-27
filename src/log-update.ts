@@ -39,30 +39,31 @@ const create = (stream: Writable, {showCursor = false} = {}): LogUpdate => {
 		}
 
 		// Detect and remove cursor marker
-		const {cleaned, position} = findAndRemoveMarker(str);
+                const previousMarker = previousMarkerPosition;
+                const {cleaned, position} = findAndRemoveMarker(str);
 
 		// Remove trailing newlines when cursor is visible
 		const output = cleaned.replace(/\n+$/, '');
 
 		// Check if both output AND cursor position are unchanged
-		const markerPositionChanged =
-			position !== previousMarkerPosition &&
-			!(
-				position &&
-				previousMarkerPosition &&
-				position.row === previousMarkerPosition.row &&
-				position.col === previousMarkerPosition.col
-			);
+                const markerPositionChanged =
+                        position !== previousMarker &&
+                        !(
+                                position &&
+                                previousMarker &&
+                                position.row === previousMarker.row &&
+                                position.col === previousMarker.col
+                        );
 
-		if (output === previousOutput && !markerPositionChanged) {
-			return;
-		}
+                if (output === previousOutput && !markerPositionChanged) {
+                        return;
+                }
 
-		previousOutput = output;
-		previousMarkerPosition = position ? {...position} : undefined;
+                previousOutput = output;
+                const nextMarkerPosition = position ? {...position} : undefined;
 
-		// Cursor control
-		let cursorControl = '';
+                // Cursor control
+                let cursorControl = '';
 
 		// Only show cursor when we have position marker
 		const shouldShowCursor = position !== undefined;
@@ -123,24 +124,27 @@ const create = (stream: Writable, {showCursor = false} = {}): LogUpdate => {
 		// 5. Move cursor to marker position
 		let finalOutput = '';
 
-		if (position && previousMarkerPosition) {
-			// Restore cursor to the end of output from last render
-			// (only if we previously saved a position)
-			finalOutput += '\u001B[u';
-		}
+                const hadSavedCursorPosition = previousMarker !== undefined;
 
-		finalOutput += ansiEscapes.eraseLines(previousLineCount) + output;
+                if (hadSavedCursorPosition) {
+                        // Restore cursor to the end of output from last render
+                        // (only if we previously saved a position)
+                        finalOutput += '\u001B[u';
+                }
+
+                finalOutput += ansiEscapes.eraseLines(previousLineCount) + output;
 
 		if (position) {
 			// Save cursor position at end of output
 			finalOutput += '\u001B[s';
 		}
 
-		finalOutput += cursorControl;
+                finalOutput += cursorControl;
 
-		stream.write(finalOutput);
+                stream.write(finalOutput);
 
-		previousLineCount = output.split('\n').length;
+                previousMarkerPosition = nextMarkerPosition;
+                previousLineCount = output.split('\n').length;
 	};
 
 	render.clear = () => {

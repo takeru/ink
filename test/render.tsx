@@ -158,15 +158,32 @@ test.serial('erase screen where state changes', async t => {
 });
 
 test.serial('erase screen where state changes in small viewport', async t => {
-	const ps = term('erase-with-state-change', ['3']);
-	await ps.waitForExit();
+        const ps = term('erase-with-state-change', ['3']);
+        await ps.waitForExit();
 
-	const frames = ps.output.split(ansiEscapes.clearTerminal);
-	const lastFrame = frames.at(-1);
+        const frames = ps.output.split(ansiEscapes.clearTerminal);
+        const lastFrame = frames.at(-1);
 
-	for (const letter of ['A', 'B', 'C']) {
-		t.false(lastFrame?.includes(letter));
-	}
+        for (const letter of ['A', 'B', 'C']) {
+                t.false(lastFrame?.includes(letter));
+        }
+});
+
+test.serial('restores cursor when marker disappears', async t => {
+        const ps = term('ime-cursor-missing-marker');
+        await ps.waitForExit();
+
+        const frames = ps.output.split(ansiEscapes.eraseLines(3));
+        const lastFrame = frames.at(-1) ?? '';
+        const firstFrameMarkerIndex = ps.output.indexOf('Marker frame line 3 should be cleared');
+        const restoreAfterFirstFrame =
+                firstFrameMarkerIndex === -1
+                        ? -1
+                        : ps.output.indexOf('\u001B[u', firstFrameMarkerIndex);
+
+        t.false(lastFrame.includes('Marker frame line 2 should be cleared'));
+        t.true(lastFrame.includes('Frame without marker line 2'));
+        t.true(restoreAfterFirstFrame > firstFrameMarkerIndex);
 });
 
 test.serial(
